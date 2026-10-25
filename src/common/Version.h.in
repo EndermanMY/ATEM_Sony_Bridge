@@ -1,0 +1,3 @@
+#pragma once
+#define BRIDGE_VERSION "@BRIDGE_VERSION@"
+#define BRIDGE_VERSION_W L"@BRIDGE_VERSION@"
