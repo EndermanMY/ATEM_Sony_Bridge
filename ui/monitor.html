@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="utf-8">
+<title>多机监看 — ATEM Sony Bridge</title>
+<link rel="stylesheet" href="lib/element-plus.css"><link rel="stylesheet" href="lib/dark-vars.css">
+<link rel="stylesheet" href="css/monitor.css">
+</head>
+<body>
+<div id="app">
+  <div class="top">
+    <span class="title">MULTI VIEW — 多机监看</span>
+    <span class="state">{{ stateText }}</span>
+    <div class="spacer"></div>
+    <div v-if="pageCount>1" class="paging"><el-button size="small" :disabled="gridPage<=1" @click="gridPage--">上一页</el-button> {{ gridPage }}/{{ pageCount }} <el-button size="small" :disabled="gridPage>=pageCount" @click="gridPage++">下一页</el-button></div>
+    <el-radio-group v-model="gridMode" size="small" @change="gridPage=1">
+      <el-radio-button value="2">2×2</el-radio-button>
+      <el-radio-button value="4">4×4</el-radio-button>
+    </el-radio-group>
+    <el-button size="small" :type="liveOn ? 'danger' : 'primary'" @click="toggleLive">
+      {{ liveOn ? '■ 停止监看' : '▶ 开启监看' }}
+    </el-button>
+  </div>
+  <div class="grid" :class="gridMode === '2' ? 'g2' : 'g4'">
+    <!-- 导播台 M/V：每台绑定的相机固定占一格，离线也占格（黑屏 + NO SIGNAL） -->
+    <div v-for="c in shownCameras" :key="c.ip" class="cell"
+         :class="{ conn: c.connected, rec: (c.recordingKnown && c.recording) }">
+      <div class="vid">
+        <canvas :id="'mx_' + mxId(c.ip)" width="1024" height="576" :class="{ on: fresh(c) }"></canvas>
+        <div v-if="!fresh(c)" class="no-sig">
+          <div class="big">{{ frameState(c) }}</div>
+          <div class="small">{{ c.ip }}</div>
+        </div>
+      </div>
+      <div class="bar">
+        <span class="lamp" :class="{ live: c.connected && !(c.recordingKnown && c.recording), rec: (c.recordingKnown && c.recording) }"></span>
+        <span class="cam-name">{{ c.name }}</span>
+        <span class="cam-id" :class="{ hot: (c.recordingKnown && c.recording) }">CAM {{ c.cameraId || '—' }}</span>
+        <span class="stat" :class="{ rec: (c.recordingKnown && c.recording) }">
+          {{ (c.recordingKnown && c.recording) ? '● REC' : frameState(c) }}
+        </span>
+      </div>
+    </div>
+    <div v-for="slot in Math.max(0,capacity-shownCameras.length)" :key="'empty'+slot" class="cell empty-cell"><span>空机位</span></div>
+    <div v-if="!cameras.length" class="state" style="padding:40px; grid-column:1/-1">
+          还没有添加相机 — 回主窗口「＋ 添加相机」
+    </div>
+  </div>
+</div>
+<script src="lib/vue.global.prod.js"></script>
+<script src="lib/element-plus.js"></script>
+<script src="js/bridge.js"></script>
+<script src="js/monitor.js"></script>
+</body>
+</html>

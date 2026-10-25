@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ATEM Sony Bridge</title>
+<link rel="stylesheet" href="lib/element-plus.css">
+<link rel="stylesheet" href="lib/dark-vars.css">
+<link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+<div id="app">
+  <div class="layout">
+    <!-- ==================== 侧边栏 ==================== -->
+    <aside class="sidebar">
+      <div class="brand">🎛️ ATEM SONY BRIDGE</div>
+      <el-button style="width:100%; margin-bottom:12px" @click="openMonitor">🖥 多机监看（独立窗口）</el-button>
+      <div class="section-h">相机</div>
+      <el-button type="primary" style="width:100%" @click="openWizard">＋ 添加相机</el-button>
+      <div style="margin-top:10px; overflow-y:auto; flex:1">
+        <div v-for="c in cameras" :key="c.ip" class="cam-item"
+             :class="{active: selectedIp === c.ip}" @click="selectCam(c.ip)">
+          <span class="cam-dot" :class="dotClass(c)"></span>
+          <span class="cam-name">{{ c.name }}</span>
+          <span class="cam-id">ID {{ c.cameraId }}</span>
+        </div>
+        <div v-if="!cameras.length" class="muted" style="padding:8px">还没有添加相机</div>
+      </div>
+      <div class="section-h">ATEM 导播台</div>
+      <div style="display:flex; gap:6px; margin-bottom:8px">
+        <el-input v-model="atemIp" size="small" placeholder="192.168.1.240" style="flex:1"></el-input>
+        <el-input v-model="atemPort" size="small" style="width:66px"></el-input>
+      </div>
+      <el-button size="small" style="width:100%" :disabled="true" title="计划于 0.3.0 接入 ATEM">
+        ATEM · 待接入（0.3.0）
+      </el-button>
+      <div class="section-h">系统</div>
+      <div class="muted">Sony SDK: {{ sdkOk ? '已初始化' : '未初始化' }}</div>
+      <div class="muted">映射规则: {{ ruleCount }} 条</div>
+      <el-button text style="width:100%; margin:8px 0 4px; text-align:left; color:var(--muted)"
+                 @click="openSettings">⚙ 软件设置</el-button>
+      <div class="muted" style="margin-top:2px">v{{ appVersion }}</div>
+    </aside>
+
+    <!-- ==================== 内容区 ==================== -->
+    <main class="content">
+      <!-- ==================== 软件设置页 ==================== -->
+      <template v-if="page === 'settings'">
+        <div class="page-title">软件设置</div>
+        <div class="panel" style="max-width:600px">
+          <div style="font-size:14px; font-weight:600; margin-bottom:14px">监看画质</div>
+          <el-radio-group v-model="qualityTarget" @change="loadLvQuality" style="margin-bottom:18px">
+            <el-radio-button value="default">默认画质</el-radio-button>
+            <el-radio-button value="camera" :disabled="!current">当前相机 {{ current?.name || '' }}</el-radio-button>
+          </el-radio-group>
+          <div class="muted" style="margin-bottom:12px">默认值供未单独设置的相机使用；当前相机设置按 IP 保存。</div>
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px">
+            <span class="muted" style="width:90px; flex:none">分辨率档位</span>
+            <el-select v-model="lvRes" style="width:180px" @change="applyLvQuality" :disabled="qualityTarget==='camera' && !current">
+              <el-option :value="1" label="高清 1024px"></el-option>
+              <el-option :value="0" label="流畅 640px"></el-option>
+            </el-select>
+          </div>
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px" v-if="qMax > 0">
+            <span class="muted" style="width:90px; flex:none">压缩质量</span>
+            <el-slider v-model="lvComp" :min="qMin" :max="qMax" :step="1" style="flex:1"
+                       @change="applyLvQuality" :disabled="qualityTarget==='camera' && !current"></el-slider>
+            <span class="muted" style="width:24px">{{ lvComp }}</span>
+          </div>
+          <div class="muted" style="margin-bottom:10px" v-else>压缩质量 {{ lvComp < 0 ? '自动最高档' : lvComp }} · 连接相机后获取可用范围</div>
+          <el-button size="small" @click="lvComp=-1;applyLvQuality()">压缩质量设为自动最高档</el-button>
+          <div class="muted" style="line-height:1.9">
+            Sony LiveView 分辨率档位上限为 1024px 宽。<br>
+            推流中修改立即下发相机；未推流时保存，下次开启监看生效。
+          </div>
+        </div>
+      </template>
+
+      <!-- ==================== 相机库 / 相机详情 ==================== -->
+      <template v-else>
+      <div class="live-pill">
+        <el-tag :type="connected ? (recording ? 'danger' : 'success') : 'info'" effect="dark" round>
+          {{ connected ? (recording ? '● REC' : 'LIVE') : 'OFFLINE' }}
+        </el-tag>
+      </div>
+
+      <template v-if="current">
+        <div class="page-title">{{ current.name }}</div>
+        <div class="status-row">
+          <span>状态 <b>{{ connected ? (current.recordingKnown ? (recording ? '● 录制中' : '已连接') : '已连接 · 录制状态未知') : phaseName(current) }}</b></span>
+          <span>型号 <b>{{ current.model || '—' }}</b></span>
+          <span>IP <b>{{ current.ip }}</b></span>
+          <span>Camera ID <b>{{ current.cameraId || '未分配' }}</b></span>
+          <span v-if="current.lastErrorMessage" class="muted">{{ current.lastErrorMessage }}</span>
+          <span v-if="current.lastError" style="color:var(--el-color-danger)">SDK 0x{{ current.lastError.toString(16) }}</span>
+          <div class="spacer"></div>
+          <el-button size="small" :loading="busy[selectedIp]" :disabled="current.transportEnabled===false" @click="connectToggle">{{ connected ? '断开连接' : '重新连接' }}</el-button>
+          <el-dropdown trigger="click" @command="camMenu">
+            <el-button text style="font-size:20px; padding:4px 10px" title="相机设置">⋯</el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="rename">重命名</el-dropdown-item>
+                <el-dropdown-item command="remove" divided style="color: var(--el-color-danger)">移除相机</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+
+        <div class="grid2" style="flex:1; min-height:0">
+          <!-- 左列：Camera ID + 录制 + 属性（监看已独立成多机监看页） -->
+          <div style="display:flex; flex-direction:column; gap:14px; min-height:0">
+            <div class="panel">
+              <div class="muted" style="margin-bottom:10px">Camera ID（ATEM 机位映射，1-15）</div>
+              <div class="id-step">
+                <el-button style="width:52px; height:48px; font-size:20px"
+                           :disabled="!(current.cameraId > 1)" @click="stepId(-1)">−</el-button>
+                <el-input v-model="idInput" class="id-input" placeholder="未分配"
+                          @change="commitId" @keyup.enter="commitId" @blur="commitId"></el-input>
+                <el-button style="width:52px; height:48px; font-size:20px"
+                           :disabled="!(current.cameraId < 15)" @click="stepId(1)">＋</el-button>
+              </div>
+              <div class="muted" style="margin-top:8px; text-align:center">
+                {{ current.cameraId ? '当前机位 ' + current.cameraId : '未分配（ATEM 侧无法路由到本机）' }}
+              </div>
+            </div>
+            <div class="panel">
+              <div class="toolbar">
+                <el-button type="danger" :loading="busy[selectedIp]" :disabled="!connected || (current.recordingKnown && recording)" @click="record('start')">⏺ 开始录制</el-button>
+                <el-button :disabled="!connected || busy[selectedIp] || (current.recordingKnown && !recording)" @click="record('stop')">⏹ 停止录制</el-button>
+              </div>
+              <div class="muted">连接方式：{{ current.connection || 'WiFi/LAN' }} · 相机操作将实时下发 CrSDK 指令</div>
+            </div>
+            <div class="panel" style="flex:1; min-height:0; display:flex; flex-direction:column">
+              <div class="toolbar">
+                <span style="font-size:13px">{{ advanced ? '高级属性' : '常用控制' }}</span><el-button size="small" @click="advanced = !advanced">{{ advanced ? '常用控制' : '高级属性' }}</el-button>
+<el-input v-if="advanced" v-model="propSearch" size="small" placeholder="搜索名称或 0x 属性码" style="width:180px"></el-input>
+                <div class="spacer"></div>
+                <el-select v-model="propGroup" size="small" style="width:110px">
+                  <el-option v-for="g in propGroups" :key="g" :label="g === '全部' ? '全部分组' : g" :value="g"></el-option>
+                </el-select>
+                <el-button size="small" type="primary" :loading="propsLoading" :disabled="!connected" @click="loadProps">读取属性</el-button>
+              </div>
+              <div style="flex:1; min-height:0">
+                <el-table :data="advanced ? filteredProps : quickProps" size="small" height="100%" style="width:100%"
+                          v-loading="propsLoading" element-loading-text="正在读取相机属性..."
+                          empty-text="点击「读取属性」获取相机参数">
+                  <el-table-column label="属性" min-width="140">
+                    <template #default="{ row }">
+                      <div style="font-size:13px">{{ propName(row.code) }}</div>
+                      <div class="muted" style="font-size:11px">0x{{ row.code.toString(16).toUpperCase().padStart(4, '0') }}</div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="当前值" width="100">
+                    <template #default="{ row }">{{ fmtVal(row) }}</template>
+                  </el-table-column>
+                  <el-table-column label="修改" width="190">
+                    <template #default="{ row }">
+                      <div v-if="row.writable && !row.range && row.possible && row.possible.length" style="display:flex; gap:6px">
+                        <el-select v-model="row.edit" size="small" style="flex:1" placeholder="选择值">
+                          <el-option v-for="p in row.possible" :key="p" :value="p"
+                                     :label="fmtCode(row.code, p) + (p === row.value ? ' ✓' : '')"></el-option>
+                        </el-select>
+                        <el-button size="small" :type="isOp(row) ? 'warning' : 'primary'"
+                                   :disabled="!connected || (!isOp(row) && row.edit === row.value)"
+                                   :loading="row.busy" @click="setProperty(row)">{{ isOp(row) ? '执行' : '应用' }}</el-button>
+                      </div>
+                      <div v-else-if="row.writable && isOp(row)">
+                        <el-button size="small" type="warning" :disabled="!connected" :loading="row.busy" @click="setProperty(row)">执行</el-button>
+                      </div>
+                      <div v-else-if="row.writable" style="display:flex; gap:6px">
+                        <el-input v-model="row.edit" size="small" style="width:100px" placeholder="数值"></el-input>
+                        <el-button size="small" :disabled="!connected" :loading="row.busy" @click="setProperty(row)">应用</el-button>
+                      </div><span v-else class="muted">只读 / 当前不可修改</span>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右列：运行日志 -->
+          <div class="panel" style="display:flex; flex-direction:column; min-height:0">
+            <div class="toolbar"><el-button text @click="logsOpen = !logsOpen">{{ logsOpen ? '收起日志' : '展开日志' }}</el-button>
+<el-select v-model="logLevel" size="small" style="width:100px"><el-option v-for="level in ['ALL','TRACE','DEBUG','INFO','WARN','ERROR','CRIT']" :value="level" :label="level"></el-option></el-select>
+<el-button size="small" @click="logPaused = !logPaused">{{ logPaused ? '继续' : '暂停' }}</el-button><el-button size="small" @click="exportLogs">导出</el-button>
+              <div class="spacer"></div>
+              <el-button size="small" text @click="logs = []">清空</el-button>
+            </div>
+            <div class="log-box" ref="logBox" v-show="logsOpen">
+              <div v-for="(l, i) in visibleLogs" :key="i" class="log-line" :class="'log-' + l.level">
+                <span class="log-time">{{ l.time }}</span>{{ l.text }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template v-else>
+        <div class="page-title">欢迎使用 ATEM Sony Bridge</div>
+        <div class="panel" style="max-width:560px">
+          <p style="line-height:2; margin:0">
+            还没有添加相机。<br>
+            点击 <b>左侧「＋ 添加相机」</b>，按五步向导完成：<br>
+            ① 选择连接方式（Wi-Fi / 有线 LAN）<br>
+            ② 阅读对应连接提示<br>
+            ③ 搜索并配对相机，加入相机库<br><br>
+            <span class="muted">添加后的相机会被软件记住，启动时自动连接；移除后不再连接。</span>
+          </p>
+        </div>
+      </template>
+      </template><!-- /相机库页 -->
+    </main>
+  </div>
+
+  <!-- ==================== 添加相机向导 ==================== -->
+  <el-dialog v-model="wizardVisible" title="添加相机" width="620px" :close-on-click-modal="false">
+    <el-steps :active="wizardStep - 1" align-center finish-status="success" style="margin-bottom:18px">
+      <el-step title="连接方式"></el-step>
+      <el-step title="相机设置"></el-step>
+      <el-step title="搜索相机"></el-step>
+      <el-step title="配对"></el-step>
+      <el-step title="完成"></el-step>
+    </el-steps>
+
+    <!-- 第 1 步：连接方式 -->
+    <div v-if="wizardStep === 1">
+      <div class="method-card" :class="{active: wizard.method === 'wifi'}" @click="wizard.method = 'wifi'">
+        <b>Wi-Fi（网络连接）</b>
+        <span>相机与电脑接入同一路由器，多机功能待双机真机验收</span>
+      </div>
+      <div class="method-card" :class="{active: wizard.method === 'lan'}" @click="wizard.method = 'lan'">
+        <b>有线 LAN</b>
+        <span>网线接入路由器，最稳定的有线方案</span>
+      </div>
+      <div class="method-card disabled" aria-disabled="true">
+        <b>USB 数据线 <span class="muted">（暂未开放）</span></b>
+        <span>最稳定的通道，适合首次配置与单相机场景</span>
+      </div>
+    </div>
+
+    <!-- 第 2 步：需要在相机上完成的设置 -->
+    <div v-if="wizardStep === 2">
+      <div class="muted" style="margin-bottom:10px">请在相机上完成以下设置（电脑端无需其他准备）：</div>
+      <div class="tips">{{ wizardTips }}</div>
+    </div>
+
+    <!-- 第 3 步：发现网络相机 / 手动 IP → 连接配对 -->
+    <div v-if="wizardStep === 3">
+      <div class="toolbar">
+        <el-button type="primary" :loading="wizard.searching" @click="searchCameras">🔍 搜索网络上的相机</el-button>
+        <span class="muted">搜索时请确保相机停在遥控拍摄等待画面</span>
+      </div>
+      <el-table :data="wizard.found" size="small" highlight-current-row @current-change="pickFound"
+                style="width:100%" max-height="160" v-loading="wizard.searching"
+                element-loading-text="正在搜索局域网内的相机..."
+                empty-text="未发现相机，请检查网络或填写下方 IP">
+        <el-table-column width="42"><template #default="{ $index }">{{ $index + 1 }}</template></el-table-column>
+        <el-table-column prop="model" label="型号"></el-table-column>
+        <el-table-column prop="serialNumber" label="序列号"></el-table-column>
+        <el-table-column prop="connectionType" label="方式" width="80"></el-table-column>
+      </el-table>
+
+      <div style="display:flex; gap:10px; align-items:flex-end; margin-top:14px">
+        <div style="flex:1">
+          <div class="muted" style="margin-bottom:6px">搜索不到？填写相机 IP</div>
+          <el-select v-model="wizard.modelName" filterable style="width:100%;margin-bottom:10px" placeholder="选择相机实际型号">
+            <el-option v-for="model in modelNames" :key="model" :value="model" :label="model"></el-option>
+          </el-select>
+          <el-input v-model="wizard.ip" placeholder="填写相机屏幕显示的 IP 地址"></el-input>
+        </div>
+      </div>
+    </div>
+
+    <!-- 第 4 步：配对执行（先引导进相机配对菜单，再点软件上的配对按钮） -->
+    <div v-if="wizardStep === 4">
+      <div class="tips" style="font-size:14px">{{ pairingTips }}</div>
+      <div style="text-align:center; margin-top:22px">
+        <el-button type="success" size="large" :loading="wizard.pairing === 'busy'"
+                   :disabled="wizard.pairing === 'ok'" @click="doPairing(false)"
+                   style="width:240px; height:48px; font-size:16px">
+          {{ wizard.pairing === 'ok' ? '✓ 配对成功' : '🔗 开始配对' }}
+        </el-button>
+      </div>
+      <div v-if="wizard.pairing === 'fail'" class="muted" style="text-align:center; margin-top:12px; color: var(--el-color-danger)">
+        {{ wizard.pairingMsg }}（相机未响应时请确认已进入配对页面后重试）
+      </div>
+    </div>
+
+    <!-- 第 5 步：命名完成 -->
+    <div v-if="wizardStep === 5">
+      <div class="muted" style="margin-bottom:10px">配对成功！最后为相机取一个名字（可随时修改）：</div>
+      <el-input v-model="wizard.name" placeholder="例如：机位 1 · FX3" size="large"></el-input>
+      <div class="muted" style="margin-top:12px">点击「完成」后相机加入左侧相机库，软件将自动连接并管理。Camera ID 可在详情页随时修改。</div>
+    </div>
+
+    <!-- SSH 凭据弹框 -->
+    <el-dialog v-model="sshDialogVisible" title="需要访问验证" width="420px" append-to-body>
+      <div class="muted" style="margin-bottom:12px">
+        相机开启了「访问验证」，请输入相机设置页（网络 → 网络选项 → 访问验证设置）中显示的用户名和密码：
+      </div>
+      <el-input v-model="wizard.sshUser" placeholder="用户名" style="margin-bottom:10px"></el-input>
+      <el-input v-model="wizard.sshPass" type="password" placeholder="密码"></el-input>
+      <template #footer>
+        <el-button @click="sshDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="doPairing(true)">重试配对</el-button>
+      </template>
+    </el-dialog>
+
+    <template #footer>
+      <el-button v-if="wizardStep > 1" :disabled="wizard.pairing==='busy' || wizard.connecting" @click="wizardStep--">上一步</el-button>
+      <el-button v-if="wizardStep === 1 && wizard.method === 'usb'" disabled>USB 向导暂未开放</el-button>
+      <el-button v-if="wizardStep < 5 && !(wizardStep === 1 && wizard.method === 'usb')"
+                 type="primary" :disabled="(wizardStep === 3 && !wizard.selected && !wizard.ip) || (wizardStep === 4 && wizard.pairing !== 'ok')"
+                 @click="wizardNext">下一步</el-button>
+      <el-button v-if="wizardStep === 5" type="primary" :loading="wizard.connecting" @click="finishWizard">完成，添加相机</el-button>
+    </template>
+  </el-dialog>
+</div>
+
+<script src="lib/vue.global.prod.js"></script>
+<script src="lib/element-plus.js"></script>
+<script src="lib/icons.js"></script>
+<script src="js/bridge.js"></script>
+<script src="js/properties.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
