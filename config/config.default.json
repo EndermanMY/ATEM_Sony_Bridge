@@ -1,0 +1,33 @@
+{
+  "atem": {
+    "ipAddress": "192.168.1.240",
+    "port": 9910,
+    "autoConnect": false
+  },
+  "camera": {
+    "autoDiscover": true,
+    "discoveryTimeout": 8,
+    "knownCameras": []
+  },
+  "ui": {
+    "showLiveView": true,
+    "showTallyLights": true,
+    "darkMode": true,
+    "refreshRate": 30
+  },
+  "log": {
+    "level": "info",
+    "filePath": "logs/bridge.log",
+    "consoleOutput": true
+  },
+  "mapping": {
+    "rulesFile": "mapping_rules.json",
+    "autoLoadRules": true
+  },
+  "cameras": [],
+  "schemaVersion": 1,
+  "liveview": {
+    "imageQuality": 1,
+    "compression": -1
+  }
+}

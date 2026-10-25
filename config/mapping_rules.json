@@ -1,0 +1,39 @@
+[
+  {
+    "id": "rule-001",
+    "name": "Camera 1 Record on ATEM Program",
+    "type": "DIRECT",
+    "atemCommand": "PROGRAM_CHANGE",
+    "conditions": [
+      {
+        "type": "atem_input",
+        "parameter": "input",
+        "value": "1",
+        "comparison": "equals"
+      }
+    ],
+    "actions": [
+      {
+        "command": "start_recording",
+        "value": "true",
+        "delayMs": 0
+      }
+    ],
+    "enabled": true
+  },
+  {
+    "id": "rule-002",
+    "name": "Stop Recording on ATEM Record Stop",
+    "type": "DIRECT",
+    "atemCommand": "RECORD_STOP",
+    "conditions": [],
+    "actions": [
+      {
+        "command": "stop_recording",
+        "value": "true",
+        "delayMs": 0
+      }
+    ],
+    "enabled": true
+  }
+]
